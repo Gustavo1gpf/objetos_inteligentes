@@ -1,0 +1,92 @@
+#include <WiFi.h>          // Biblioteca para conectar ao Wi-Fi
+#include <PubSubClient.h>   // Biblioteca MQTT
+
+// Configurações Wi-Fi
+const char* ssid = "AP2540";           // Nome da minha rede Wi-Fi
+const char* password = "16894572";     // Senha da minha rede Wi-Fi
+
+// Configurações MQTT
+const char* mqtt_server = "192.168.1.10"; //  Endereço do meu servidor MQTT
+
+const int co2DetectorPin = 4; // Pino onde o MQ-135 (detector de CO2) está conectado
+const int ventiladorPin = 5;  // Pino para controlar o ventilador
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+// Função para conectar ao Wi-Fi
+void setup_wifi() {
+  delay(10);
+  Serial.println();
+  Serial.print("Conectando ao Wi-Fi: ");
+  Serial.println(ssid);
+
+  WiFi.begin(ssid, password); // Inicia a conexão Wi-Fi
+
+  // Espera até que o ESP32 se conecte ao Wi-Fi
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi conectado.");
+  Serial.println("Endereço IP: ");
+  Serial.println(WiFi.localIP());
+}
+
+// Função para conectar ao servidor MQTT
+void reconnect() {
+  // Loop até conseguir conexão com o servidor MQTT
+  while (!client.connected()) {
+    Serial.print("Tentando conexão MQTT...");
+    if (client.connect("ESP32Client")) {
+      Serial.println("Conectado ao servidor MQTT");
+    } else {
+      Serial.print("Falha, rc=");
+      Serial.print(client.state());
+      Serial.println(" Tentando novamente em 5 segundos");
+      delay(5000);
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(9600);        // Inicializa a comunicação serial
+  setup_wifi();              // Conecta ao Wi-Fi
+  client.setServer(mqtt_server, 1883); // Configura o servidor MQTT e a porta padrão 1883
+
+  pinMode(ventiladorPin, OUTPUT);  // Define o pino do ventilador como saída
+  digitalWrite(ventiladorPin, LOW); // Inicialmente, o ventilador está desligado
+}
+
+void loop() {
+  // Verifica se está conectado ao MQTT
+  if (!client.connected()) {
+    reconnect(); // Tenta reconectar ao servidor MQTT
+  }
+  client.loop();
+
+  int analogValue = analogRead(co2DetectorPin); // Lê o valor do detector de CO2 (MQ-135)
+  Serial.println(analogValue); // Imprime o valor no monitor serial
+
+  // Envia o valor do sensor para o tópico MQTT
+  char msg[50];
+  snprintf(msg, 50, "Valor de CO2: %d", analogValue); // Formata a mensagem
+  client.publish("sensor/co2", msg); // Publica no tópico "sensor/co2"
+
+  // Verifica se o valor ultrapassa ou cai abaixo de 500 ppm
+  if (analogValue >= 500) {
+    // Se ultrapassou 500 ppm
+    snprintf(msg, 50, "Ventilador acionado acima de 500ppm de CO2");
+    client.publish("sensor/co2", msg);
+    digitalWrite(ventiladorPin, HIGH); // Liga o ventilador
+  } else {
+    // Se caiu abaixo de 500 ppm
+    snprintf(msg, 50, "Ventilador desligado abaixo de 500 ppm de CO2");
+    client.publish("sensor/co2", msg);
+    digitalWrite(ventiladorPin, LOW); // Desliga o ventilador
+  }
+
+  delay(1000); // Aguarda um pouco antes da próxima leitura
+}
